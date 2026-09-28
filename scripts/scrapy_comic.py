@@ -105,7 +105,7 @@ if __name__ == "__main__":
     with sync_playwright() as p:
         browser = p.chromium.launch(
             channel="chromium",
-            headless=False,
+            headless=True,
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = browser.new_context(
