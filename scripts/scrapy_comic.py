@@ -6,6 +6,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import BrowserContext, sync_playwright
+from tqdm import tqdm
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
@@ -128,42 +129,57 @@ def download(
     page.wait_for_timeout(3000)
 
     failed: list[int] = []
-    consecutive_403 = 0
+    consecutive_fail = 0
+    done = skipped = 0
 
-    for i, u in enumerate(image_urls, start=1):
-        ext = Path(urlparse(u).path).suffix or ".webp"
-        target = folder / f"{i:03d}{ext}"
-        if target.exists() and target.stat().st_size > 0:
-            continue
+    # 进度条运行期间用 tqdm.write 输出日志，避免把进度条打断成多行
+    bar = tqdm(total=len(image_urls), desc="下载", unit="张", dynamic_ncols=True)
+    try:
+        for i, u in enumerate(image_urls, start=1):
+            ext = Path(urlparse(u).path).suffix or ".webp"
+            target = folder / f"{i:03d}{ext}"
+            if target.exists() and target.stat().st_size > 0:
+                skipped += 1
+                bar.set_postfix({"成功": done, "跳过": skipped, "失败": len(failed)})
+                bar.update(1)
+                continue  # 已存在的不需要等待 delay
 
-        ok = False
-        for attempt in range(1, retries + 1):
-            try:
-                resp = page.goto(u, referer=chapter_url, wait_until="load")
-                if resp and resp.ok:
-                    target.write_bytes(resp.body())
-                    ok = True
-                    consecutive_403 = 0
-                    break
-                status = resp.status if resp else None
-                print(f"[{i}] HTTP {status}，第 {attempt} 次")
-                if status == 403:
-                    page.wait_for_timeout(3000 * attempt)  # 403 时退避更久
-            except Exception as e:
-                print(f"[{i}] 异常：{e}，第 {attempt} 次")
-                page.wait_for_timeout(2000)
+            ok = False
+            for attempt in range(1, retries + 1):
+                try:
+                    resp = page.goto(u, referer=chapter_url, wait_until="load")
+                    if resp and resp.ok:
+                        target.write_bytes(resp.body())
+                        ok = True
+                        consecutive_fail = 0
+                        break
+                    status = resp.status if resp else None
+                    tqdm.write(f"[{i}] HTTP {status}，第 {attempt} 次")
+                    if status == 403:
+                        page.wait_for_timeout(3000 * attempt)  # 403 时退避更久
+                except Exception as e:
+                    tqdm.write(f"[{i}] 异常：{e}，第 {attempt} 次")
+                    page.wait_for_timeout(2000)
 
-        if not ok:
-            failed.append(i)
-            consecutive_403 += 1
-            if consecutive_403 >= 5:
-                print("连续 5 张失败，疑似被限速/拦截，先停止。已下载的下次会自动跳过。")
+            if ok:
+                done += 1
+            else:
+                failed.append(i)
+                consecutive_fail += 1
+
+            bar.set_postfix({"成功": done, "跳过": skipped, "失败": len(failed)})
+            bar.update(1)
+
+            if consecutive_fail >= 5:
+                tqdm.write("连续 5 张失败，疑似被限速/拦截，先停止。已下载的下次会自动跳过。")
                 failed.extend(range(i + 1, len(image_urls) + 1))
                 break
 
-        page.wait_for_timeout(delay_ms)
+            page.wait_for_timeout(delay_ms)
+    finally:
+        bar.close()
+        page.close()
 
-    page.close()
     return failed
 
 
