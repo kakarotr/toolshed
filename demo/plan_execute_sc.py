@@ -23,7 +23,7 @@ agent = Agent(
     model=OpenAIChatModel(
         model="deepseek-flash",
         credential=OpenAICredential(
-            base_url="https://api.deepseek.com/v1", api_key=SecretStr("sk-77ca3de57cd441a98a9e0dfdd8c6446e")
+            base_url="https://api.deepseek.com/v1", api_key=SecretStr("sk-")
         ),
         extra_body={"thinking": {"type": "disabled"}},
     ),
